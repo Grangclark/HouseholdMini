@@ -10,79 +10,102 @@ import CoreData
 
 struct ContentView: View {
     @Environment(\.managedObjectContext) private var viewContext
-
+    
+    // 入力フォーム用の状態変数
+    @State private var selectedType = "Income"
+    @State private var amountText = ""
+    @State private var selectedDate = Date()
+    
+    let types = ["Income", "Expense"]
+    
+    // Core DataからRecordをフェッチ
     @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
+        sortDescriptors: [NSSortDescriptor(keyPath: \Record.date, ascending: false)],
         animation: .default)
-    private var items: FetchedResults<Item>
+    
+    // private var items: FetchedResults<Item>
+    var records: FetchedResults<Record>
 
     var body: some View {
         NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+            VStack {
+                Form {
+                    Section(header: Text("記録の追加")) {
+                        Picker("タイプ", selection: $selectedType) {
+                            ForEach(types, id: \.self) { type in
+                                Text(type == "Income" ? "収入" : "支出")
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        
+                        TextField("金額を入力", text: $amountText)
+                            .keyboardType(.decimalPad)
+                        
+                        DatePicker("日付", selection: $selectedDate, displayedComponents: .date)
+                        
+                        Button(action: addRecord) {
+                            Text("保存")
+                                .frame(maxWidth: .infinity)
+                        }
                     }
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                .frame(maxHeight: 300) // フォームの高さを制限（任意）
+                
+                List {
+                    ForEach(groupedRecords.keys.sorted(by: >), id: \.self) { month in
+                        Section(header: Text(month)) {
+                            ForEach(groupedRecords[month] ?? []) { record in
+                                HStack {
+                                    Text(record.type ?? "")
+                                        .foregroundColor(record.type == "Expense" ? .red : .green)
+                                    Spacer()
+                                    Text("\(record.amount, specifier: "%.2f") 円")
+                                }
+                            }
+                            if let total = monthlyTotal(for: groupedRecords[month] ?? []) {
+                                HStack {
+                                    Spacer()
+                                    Text("合計: \(total, specifier: "%.2f") 円")
+                                        .fontWeight(.bold)
+                                }
+                            }
+                        }
                     }
                 }
             }
-            Text("Select an item")
+            .navigationTitle("家計簿")
         }
     }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+                                    
+    ///  入力された内容を元に新規Recordを作成して保存
+    private func addRecord() {
+        guard let amount = Double(amountText) else { return }
+        let newRecord = Record(context: viewContext)
+        newRecord.id = UUID()
+        newRecord.type = selectedType
+        newRecord.amount = amount
+        newRecord.date = selectedDate
+                                
+        do {
+            try viewContext.save()
+            amountText = "" // 保存後に金額入力をクリア
+        } catch {
+            print("記録の保存に失敗: \(error)")
         }
     }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+                                    
+    // Recordを「yyyy年MM月」ごとにグループ化
+    private var groupedRecords: [String: [Record]] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年MM月"
+        return Dictionary(grouping: records) { record in
+            let date = record.date ?? Date()
+            return formatter.string(from: date)
         }
     }
-}
-
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
-
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+    
+    ///  指定されたRecord群の合計金額を計算
+    private func monthlyTotal(for records: [Record]) -> Double? {
+        records.map { $0.amount }.reduce(0, +)
     }
 }
